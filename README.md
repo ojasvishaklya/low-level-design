@@ -113,17 +113,75 @@ Each problem implementation follows these principles:
 - Concurrency Control
 - Database Design (where applicable)
 
+## Approach to Solving LLD Problems
+
+Follow this systematic approach when tackling any LLD problem:
+
+### 1. Clarify Requirements
+- Ask questions about functional requirements
+- Understand scale, constraints, and assumptions
+- Identify core use cases vs. nice-to-have features
+- Clarify edge cases and error scenarios
+
+### 2. Identify Core Entities/Classes
+- List all nouns from requirements (User, Vehicle, Parking Spot, etc.)
+- Determine if they should be concrete classes, abstract classes, or interfaces
+- Identify enums for fixed sets of values (VehicleType, PaymentStatus, etc.)
+
+### 3. Define Relationships & Cardinality
+- **IS-A relationships**: Inheritance hierarchies (Car IS-A Vehicle)
+- **HAS-A relationships**: Composition vs. Aggregation
+  - Composition: Strong ownership (ParkingLot HAS-A Floor - floor can't exist without lot)
+  - Aggregation: Weak ownership (Library HAS-A Book - book can exist independently)
+- **Cardinality**: One-to-One, One-to-Many, Many-to-Many
+- **Dependencies**: Which classes depend on which
+
+### 4. Assign Responsibilities (Methods to Classes)
+- Follow Single Responsibility Principle - each class should have one reason to change
+- Ask: "Which class should own this behavior?"
+- Avoid "god classes" or "orchestrator classes" that do everything
+- Distribute responsibilities appropriately
+  - Example: `ParkingSpot.isAvailable()` vs. `ParkingLotManager.isSpotAvailable(spot)`
+
+### 5. Define State (Attributes)
+- List attributes needed for each class
+- Determine visibility (private/public/protected)
+- Consider immutability where applicable (use `final` for fields that shouldn't change)
+- Think about which fields are required vs. optional
+
+### 6. Identify Design Patterns
+- **Creational**: Factory, Builder, Singleton (use sparingly)
+- **Structural**: Adapter, Decorator, Facade
+- **Behavioral**: Strategy, Observer, Command, State
+- Don't force patterns - use them when they solve a real problem
+
+### 7. Apply SOLID Principles
+- **S**ingle Responsibility: One class, one job
+- **O**pen-Closed: Open for extension, closed for modification
+- **L**iskov Substitution: Subtypes should be substitutable for base types
+- **I**nterface Segregation: Many small interfaces > one large interface
+- **D**ependency Inversion: Depend on abstractions, not concretions
+
+### 8. Handle Edge Cases & Constraints
+- Null checks and validation
+- Thread safety (synchronized, locks, concurrent collections)
+- Error handling and exception strategies
+- Performance considerations (time/space complexity)
+
+### 9. Keep It Simple
+- Start with a simple, working solution
+- Don't over-engineer or add unnecessary abstractions
+- Iterate and refine based on new requirements
+- Prefer composition over inheritance
+
 ## Interview Tips
 
-When approaching LLD problems in interviews:
-
-1. **Clarify Requirements**: Ask questions about scale, constraints, and edge cases
-2. **Identify Entities**: List main classes and their relationships
-3. **Define Relationships**: Use appropriate associations (composition, aggregation, inheritance)
-4. **Apply SOLID**: Ensure your design follows SOLID principles
-5. **Consider Extensibility**: Design should be easy to extend
-6. **Handle Edge Cases**: Think about null checks, thread safety, etc.
-7. **Keep It Simple**: Don't over-engineer; start with a simple solution
+- **Draw diagrams**: Sketch class diagrams to visualize relationships
+- **Think aloud**: Explain your thought process as you design
+- **Start small**: Begin with core functionality, then extend
+- **Ask for feedback**: Check if the interviewer wants more detail on any area
+- **Write clean code**: Use meaningful names, proper indentation, and comments where needed
+- **Test your design**: Walk through use cases to verify it works
 
 ## Contributing
 
