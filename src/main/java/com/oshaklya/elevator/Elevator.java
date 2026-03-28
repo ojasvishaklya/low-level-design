@@ -2,18 +2,21 @@ package com.oshaklya.elevator;
 
 import java.util.HashSet;
 import java.util.Optional;
+import java.util.concurrent.LinkedBlockingDeque;
 
 class Elevator {
     int id;
     int floor;
     Direction direction;
     HashSet<ElevatorRequest> requests;
+    LinkedBlockingDeque<ElevatorRequest> threadSafeRequests;
 
     Elevator(int id) {
         this.id = id;
         this.floor = 0;
         this.direction = Direction.IDLE;
         this.requests = new HashSet<>();
+        this.threadSafeRequests = new LinkedBlockingDeque<>(1000);
     }
 
     int getFloor() {
@@ -31,6 +34,21 @@ class Elevator {
         }
         requests.add(elevatorRequest);
         return true;
+    }
+
+    boolean threadSafeAddRequest(ElevatorRequest elevatorRequest) {
+        try {
+            threadSafeRequests.put(elevatorRequest);  // Blocking - waits if full
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    void threadSafeStepAhead(){
+        this.threadSafeRequests.drainTo(this.requests);
+        stepAhead();
     }
 
     void stepAhead() {

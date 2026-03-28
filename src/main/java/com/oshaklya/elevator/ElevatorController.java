@@ -39,8 +39,8 @@ class ElevatorController {
         if (assignedElevator == null) {
             throw new IllegalStateException("could not assign elevator");
         }
-        assignedElevator.addRequest(elevatorRequest);
-        return assignedElevator.id;
+
+        return assignedElevator.addRequest(elevatorRequest) ? assignedElevator.id : -1;
     }
 
     private Optional<Elevator> getClosestElevatorByDirection(int sourceFloor, Direction direction) {

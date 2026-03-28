@@ -132,5 +132,9 @@ DESIGN DECISIONS:
 • Stream API → clean filtering and sorting
 • Comparator.comparingInt() → find closest elevator by distance
 • Single responsibility → each method has one clear purpose
+• Concurrent request can be handled by using BlockingQueue, only addRequest function adds the queue, stepAhead only reads
+  and in memory converts into HashSet, this way we can avoid concurrency issues with the HashSet and still have O(1) add/remove operations.
+  clear separation - multiple writers to queue, single reader processes. No race conditions.
+
 
 
