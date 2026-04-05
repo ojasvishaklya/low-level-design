@@ -1,4 +1,4 @@
-package com.oshaklya.designpatterns;
+package com.oshaklya.design_patterns;
 
 /*
 Purpose: Ensure only one instance of a class exists and provide global access point to it

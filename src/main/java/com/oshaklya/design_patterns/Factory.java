@@ -1,4 +1,4 @@
-package com.oshaklya.designpatterns;
+package com.oshaklya.design_patterns;
 
 interface Notification {
     void sendNotification(String message);

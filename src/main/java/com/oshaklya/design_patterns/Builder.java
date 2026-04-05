@@ -1,4 +1,4 @@
-package com.oshaklya.designpatterns;
+package com.oshaklya.design_patterns;
 
 import java.util.HashMap;
 import java.util.Map;
