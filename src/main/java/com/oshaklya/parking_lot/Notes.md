@@ -39,18 +39,17 @@ ENTITIES
 // ═══════════════════════════════════════════════════════════════════════════
 
 enum VehicleType [TWO_WHEELER, SMALL_VEHICLE, LARGE_VEHICLE]
-enum ParkingSpotType [COMPACT, MEDIUM, LARGE]
+enum ParkingSpotType [SMALL, MEDIUM, LARGE]
 
 class Vehicle
-- vehicleType: VehicleType
 - id: Int
+- vehicleType: VehicleType
 
 class Ticket
-- ticketId: Int
-- vehicleId: Int
+- id: String  // UUID
 - spotId: Int
-- parkingSpotType: ParkingSpotType
-- entryTime: Long
+- vehicleId: Int
+- entryTime: LocalDateTime
 - isUsed: Boolean
 
 class ParkingSpot
@@ -59,13 +58,84 @@ class ParkingSpot
 - isVacant: Boolean
 
 class ParkingLot
-- parkingSpots: Map<Int, ParkingSpot>
-- activeTickets: Map<Int, Ticket>  // ticketId -> Ticket
-+ markParkingSpotVacant(parkingSpotId: Int)
-+ markParkingSpotFilled(parkingSpotId: Int)
-+ getAvailableParkingSpots(vehicle: Vehicle) -> List<ParkingSpot>
+- parkingSpotsMap: Map<Int, ParkingSpot>
+- ticketsMap: Map<String, Ticket>  // ticketId (String/UUID) -> Ticket
+- parkingSpotMapping: Map<VehicleType, ParkingSpotType>  // TWO_WHEELER→SMALL, SMALL_VEHICLE→MEDIUM, LARGE_VEHICLE→LARGE
++ ParkingLot(parkingSpotsMap: Map<Int, ParkingSpot>)
++ getParkingSpotType(vehicleType: VehicleType) -> ParkingSpotType
++ createTicket() -> Ticket
++ getAvailableParkingSpot(vehicle: Vehicle) -> Int  // returns spotId or -1
++ markSpotUsed(id: Int)
++ markSpotVacant(id: Int)
++ getTicketDetails(ticketId: String) -> Ticket
 
 class ParkingLotController
 - parkingLot: ParkingLot
-+ assignSpot(vehicle: Vehicle) -> Int // only returns ticketId so ticket cant be altered.
-+ exitVehicle(vehicle: Vehicle, ticket: Ticket) -> Boolean
++ assignSpot(vehicle: Vehicle) -> String  // returns ticketId (UUID String) or error message
++ exitVehicleAndCalculateFare(vehicle: Vehicle, ticketId: String) -> Int  // returns fare in dollars
++ calculateFare(startTime: LocalDateTime) -> Int  // $10/hour, rounded up
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DESIGN NOTES
+// ═══════════════════════════════════════════════════════════════════════════
+
+KEY DESIGN DECISIONS:
+
+1. Two-level validation on Ticket:
+   - vehicleId match: ensures correct owner claims the ticket
+   - isUsed flag: prevents ticket reuse (same ticket used twice)
+
+2. Ticket ID is UUID String (not Int) for uniqueness across distributed systems
+
+3. Vehicle-to-Spot Mapping (hardcoded in ParkingLot constructor):
+   - TWO_WHEELER → SMALL
+   - SMALL_VEHICLE → MEDIUM
+   - LARGE_VEHICLE → LARGE
+
+4. Fare Calculation:
+   - Duration: difference between entryTime and exit time
+   - Formula: Math.ceil(minutes/60) * $10
+
+5. Spot Assignment Flow:
+   - getAvailableParkingSpot() finds first vacant spot of correct type
+   - Returns -1 if no spot available (Controller returns "No slot available")
+   - createTicket() generates UUID and sets isUsed=false
+   - markSpotUsed() marks spot as occupied
+
+6. Exit Flow:
+   - Validates ticket (isUsed + vehicleId)
+   - Marks ticket as used (prevents reuse)
+   - Frees the spot
+   - Calculates and returns fare
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONCURRENCY HANDLING
+// ═══════════════════════════════════════════════════════════════════════════
+
+RACE CONDITIONS TO FIX:
+
+1. assignSpot(): Race between getAvailableParkingSpot() and markSpotUsed()
+   - Problem: Two threads can get same spot as available, both assign it
+   - Fix: Make check-then-act atomic (synchronize spot assignment or use CAS)
+```java
+      boolean tryReserveSpot(int spotId) {                                                                                                                              
+          ParkingSpot spot = parkingSpotsMap.get(spotId);                                                                                                               
+          if (spot == null) return false;                                                                                                                               
+                                                                                                                                                                        
+          // CAS: compareAndSet(expectedValue, newValue)                                                                                                                
+          // Returns true only if current value is 'true' and successfully sets to 'false'
+          return spot.isVacant.compareAndSet(true, false);                                                                                                              
+      } 
+     class ParkingSpot {                                                                                                                                                   
+         int id;                                               
+         ParkingSpotType parkingSpotType;
+         AtomicBoolean isVacant;  // ← Changed from Boolean to AtomicBoolean
+      }
+```
+
+2. The simplest correct solution is to synchronize the entire assignSpot() method,
+   - which serializes all entrance requests. This is sufficient for most parking lots.
+   - If we needed higher concurrency, we could use atomic check-and-add on the parkingSpotsMap Set with retry logic.
+   - For a parking lot with 3-5 entrances and typical traffic, method-level synchronization is the right choice—it's simple
