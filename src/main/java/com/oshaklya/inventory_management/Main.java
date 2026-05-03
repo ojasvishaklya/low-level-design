@@ -5,6 +5,9 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 interface AlertListener {
     void notify(String message);
@@ -27,73 +30,94 @@ class AlertConfig {
     }
 }
 
+class Product {
+    String name;
+    int quantity;
+    List<AlertConfig> alertConfigs;
+    Lock lock = new ReentrantLock();
+
+    Product(String name) {
+        this.name = name;
+        this.quantity = 0;
+        this.alertConfigs = new ArrayList<>();
+    }
+}
+
 class Warehouse {
     int id;
-    Map<String, List<AlertConfig>> alertConfigs;
-    Map<String, Integer> inventory;
+    Map<String, Product> inventory;
 
     Warehouse(int id) {
         this.id = id;
-        alertConfigs = new HashMap<>();
-        inventory = new HashMap<>();
+        inventory = new ConcurrentHashMap<>();
     }
 
     void addItem(String item, int quantity) {
-        List<AlertConfig> alertConfigList;
+        Product product = inventory.computeIfAbsent(item, k -> new Product(item));
 
-        synchronized (inventory) {
-            inventory.put(item, inventory.getOrDefault(item, 0) + quantity);
-            alertConfigList = getAlertsToFire(item, quantity);
+        List<AlertConfig> alertConfigList;
+        int currentStock;
+
+        try {
+            product.lock.lock();
+            product.quantity += quantity;
+            currentStock = product.quantity;
+            alertConfigList = new ArrayList<>(product.alertConfigs);  // ✅ Copy list
+        } finally {
+            product.lock.unlock();
         }
-        // doing this outside synchronized as firing alerts can take time
-        if (alertConfigList != null)
-            alertConfigList.forEach(config -> {
-                if (config.threshold >= quantity) {
-                    config.alertListener.notify("product quantity is below threshold" + config.threshold);
-                }
-            });
+
+        // Fire alerts outside lock
+        for (AlertConfig config : alertConfigList) {
+            if (currentStock <= config.threshold) {
+                config.alertListener.notify("Stock below threshold: " + currentStock + " <= " + config.threshold);
+            }
+        }
     }
 
     void removeItem(String item, int quantity) {
-        List<AlertConfig> alertConfigList;
-        synchronized (inventory) {
-            if (inventory.containsKey(item) && inventory.get(item) >= quantity) {
-                inventory.put(item, inventory.get(item) - quantity);
-
-            } else {
-                throw new IllegalArgumentException("Item does not exist");
-            }
-            alertConfigList = getAlertsToFire(item, quantity);
+        Product product = inventory.get(item);
+        if (product == null) {
+            throw new IllegalArgumentException("Item does not exist");
         }
-        if (alertConfigList != null)
-            alertConfigList.forEach(config -> {
-                if (config.threshold >= quantity) {
-                    config.alertListener.notify("product quantity is below threshold" + config.threshold);
-                }
-            });
+
+        List<AlertConfig> alertConfigList;
+        int currentStock;
+
+        try {
+            product.lock.lock();
+            if (product.quantity < quantity) {
+                throw new IllegalArgumentException("Insufficient quantity");
+            }
+            product.quantity -= quantity;
+            currentStock = product.quantity;
+            alertConfigList = new ArrayList<>(product.alertConfigs);
+        } finally {
+            product.lock.unlock();
+        }
+
+        // Fire alerts outside lock
+        for (AlertConfig config : alertConfigList) {
+            if (currentStock <= config.threshold) {
+                config.alertListener.notify("Stock below threshold: " + currentStock + " <= " + config.threshold);
+            }
+        }
     }
 
     int getQuantity(String item) {
-        synchronized (inventory) {
-            return inventory.getOrDefault(item, 0);
+        Product product = inventory.get(item);
+        if (product == null) return 0;
+
+        try {
+            product.lock.lock();
+            return product.quantity;
+        } finally {
+            product.lock.unlock();
         }
     }
 
-    boolean getAvailable(String item)  {
-        synchronized (inventory) {
-            return inventory.containsKey(item);
-        }
-    }
-
-    void setLowStockAlert(String item, int quantity, AlertListener alertListener) {
-        alertConfigs.getOrDefault(item, new ArrayList<>()).add(new AlertConfig(quantity, alertListener));
-    }
-
-    private List<AlertConfig> getAlertsToFire(String item, int quantity) {
-        if (!alertConfigs.containsKey(item)) {
-            return null;
-        }
-        return alertConfigs.get(item);
+    boolean getAvailable(String item) {
+        return inventory.containsKey(item);
     }
 }
 
@@ -131,7 +155,13 @@ class InventoryManager {
     void setLowStockAlert(int warehouseId, String item, int quantity, AlertListener alertListener) {
         if (warehouses.containsKey(warehouseId)) {
             Warehouse warehouse = warehouses.get(warehouseId);
-            warehouse.setLowStockAlert(item, quantity, alertListener);
+            Product product = warehouse.inventory.get(item);
+            if (product == null) {
+                throw new IllegalArgumentException("Item does not exist");
+            }
+            product.lock.lock();
+            product.alertConfigs.add(new AlertConfig(quantity, alertListener));
+            product.lock.unlock();
         } else throw new IllegalArgumentException("Warehouse does not exist");
     }
 
@@ -141,17 +171,39 @@ class InventoryManager {
         if (warehouseFrom == null || warehouseTo == null) {
             throw new IllegalArgumentException("Warehouse does not exist");
         }
-        if (quantity < 0) {
+        if (quantity <= 0) {
             throw new IllegalArgumentException("Quantity must be greater than 0");
         }
-        synchronized (warehouses.get(Math.max(warehouseIdTo, warehouseIdFrom))) {
-            synchronized (warehouses.get(Math.min(warehouseIdTo, warehouseIdFrom))) {
-                if (warehouseFrom.getQuantity(item) < quantity) {
-                    throw new IllegalArgumentException("Item does not exist");
+        Product productFrom = warehouseFrom.inventory.get(item);
+        if (productFrom == null) {
+            throw new IllegalArgumentException("Item does not exist in source warehouse");
+        }
+        Product productTo = warehouseTo.inventory.computeIfAbsent(item, k -> new Product(item));
+        Product first, second;
+        if (System.identityHashCode(productFrom) < System.identityHashCode(productTo)) {
+            first = productFrom;
+            second = productTo;
+        } else {
+            first = productTo;
+            second = productFrom;
+        }
+
+        try {
+            first.lock.lock();
+            try {
+                second.lock.lock();
+
+                if (productFrom.quantity < quantity) {
+                    throw new IllegalArgumentException("Insufficient quantity in source warehouse");
                 }
+
+                productFrom.quantity -= quantity;
+                productTo.quantity += quantity;
+            } finally {
+                second.lock.unlock();
             }
-            warehouseTo.addItem(item, quantity);
-            warehouseFrom.removeItem(item, quantity);
+        } finally {
+            first.lock.unlock();
         }
     }
 }

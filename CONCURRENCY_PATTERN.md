@@ -68,6 +68,56 @@ Map<String, EntityState> map = new HashMap<>();
 Map<String, EntityState> map = new ConcurrentHashMap<>();
 ```
 
+**Why ConcurrentHashMap even if map structure is immutable after construction?**
+
+If you create all entities in the constructor and NEVER call `put`/`remove`/`clear` after construction:
+```java
+class Service {
+    private final Map<String, EntityState> entities;
+    
+    Service() {
+        this.entities = new ConcurrentHashMap<>();
+        // All entities created HERE before publication
+        for (...) entities.put(...);
+    }
+    
+    void operation(String id) {
+        EntityState entity = entities.get(id);  // Only reads, no structural changes
+        entity.lock.lock();
+        // modify entity state
+    }
+}
+```
+
+**Two valid options:**
+
+```java
+// Option 1: ConcurrentHashMap (Recommended)
+// ✅ Explicit concurrency support
+// ✅ Safe concurrent iteration (won't throw ConcurrentModificationException)
+// ✅ Self-documenting - code signals "multiple threads access this"
+// ✅ Future-proof if someone adds dynamic creation later
+private final Map<String, EntityState> entities = new ConcurrentHashMap<>();
+
+// Option 2: HashMap + unmodifiableMap (Also valid)
+// ✅ Makes immutability explicit
+// ✅ Prevents accidental modification
+// ⚠️ Must ensure no concurrent iteration during construction
+Map<String, EntityState> temp = new HashMap<>();
+for (...) temp.put(...);
+this.entities = Collections.unmodifiableMap(temp);
+```
+
+**Use ConcurrentHashMap when:**
+- Entities created dynamically at runtime (need `computeIfAbsent`)
+- Multiple threads iterate/read concurrently
+- Want explicit concurrency intent
+
+**Use HashMap + unmodifiableMap when:**
+- All entities created in constructor (fixed set)
+- Want to prevent accidental modification
+- Immutability is a key design constraint
+
 ### 3. Atomic Entity Retrieval
 ```java
 // ❌ Wrong: Race condition, multiple threads create different objects
@@ -165,14 +215,86 @@ try {
 
 ## Pattern Application Examples
 
-| Domain | Entity | EntityId | What Lock Protects |
-|--------|--------|----------|-------------------|
-| **Rate Limiter** | Client bucket | clientId | Token count, refill timestamp |
-| **Movie Booking** | Seat | seatNumber | Status (available/reserved/booked) |
-| **Inventory** | Product stock | productId+warehouseId | Available/reserved/shipped counts |
-| **Bank Account** | Account | accountId | Balance, transaction history |
-| **Parking Lot** | Parking spot | spotId | Occupied status, vehicle info |
-| **Elevator** | Elevator car | elevatorId | Current floor, direction, requests |
+| Domain | Entity | EntityId | What Lock Protects | Map Type |
+|--------|--------|----------|-------------------|----------|
+| **Rate Limiter** | Client bucket | clientId | Token count, refill timestamp | ConcurrentHashMap (dynamic creation) |
+| **Movie Booking** | Seat | seatId (e.g., "A1") | Status (available/reserved/booked) | ConcurrentHashMap (fixed, but safe iteration) |
+| **Inventory** | Product stock | productId+warehouseId | Available/reserved/shipped counts | ConcurrentHashMap (dynamic creation) |
+| **Bank Account** | Account | accountId | Balance, transaction history | ConcurrentHashMap (dynamic creation) |
+| **Parking Lot** | Parking spot | spotId | Occupied status, vehicle info | ConcurrentHashMap (fixed, but safe iteration) |
+| **Elevator** | Elevator car | elevatorId | Current floor, direction, requests | ConcurrentHashMap (fixed, but safe iteration) |
+
+## Real-World Examples
+
+### Movie Booking System (Fixed Entity Set)
+```java
+class Seat {
+    char row;
+    int number;
+    SeatStatus status;
+    Reservation reservation;
+    Lock lock = new ReentrantLock();
+    
+    Seat(char row, int number) {
+        this.row = row;
+        this.number = number;
+        this.status = SeatStatus.AVAILABLE;
+    }
+    
+    String getId() { return row + String.valueOf(number); }
+}
+
+class Show {
+    // ConcurrentHashMap even though seats never added/removed after construction
+    // Reason: Safe concurrent iteration, explicit threading intent
+    private final Map<String, Seat> seats = new ConcurrentHashMap<>();
+    
+    Show(Screen screen, ...) {
+        // All seats created in constructor
+        for (Seat templateSeat : screen.getSeats()) {
+            Seat seat = new Seat(templateSeat.getRow(), templateSeat.getNumber());
+            seats.put(seat.getId(), seat);  // ← No put() after this
+        }
+    }
+    
+    Reservation bookSeats(List<String> seatIds) {
+        // Get seats from map
+        List<Seat> seatsToBook = new ArrayList<>();
+        for (String seatId : seatIds) {
+            Seat seat = seats.get(seatId);  // ← Only reads, never put()
+            seatsToBook.add(seat);
+        }
+        
+        // Sort and lock
+        seatsToBook.sort(Comparator.comparing(Seat::getId));
+        for (Seat seat : seatsToBook) {
+            seat.lock.lock();
+        }
+        
+        try {
+            // Check and book atomically
+            for (Seat seat : seatsToBook) {
+                if (seat.status != SeatStatus.AVAILABLE) return null;
+            }
+            for (Seat seat : seatsToBook) {
+                seat.status = SeatStatus.RESERVED;
+                seat.reservation = new Reservation(...);
+            }
+            return reservation;
+        } finally {
+            for (Seat seat : seatsToBook) {
+                seat.lock.unlock();
+            }
+        }
+    }
+}
+```
+
+**Key Points:**
+- Map structure is immutable after construction (fixed seat layout)
+- ConcurrentHashMap used for safe iteration and explicit intent
+- Each Seat is an independent entity with its own lock
+- Booking multiple seats uses ordered locking to prevent deadlock
 
 ## When NOT to Use
 

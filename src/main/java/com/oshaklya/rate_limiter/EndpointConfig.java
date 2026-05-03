@@ -13,10 +13,10 @@ class RateLimiterFactory {
     public static RateLimitingStrategy create(EndpointConfig config) {
         if (config.algorithm == TOKEN_BUCKET) {
             TokenBucketConfig tb = (TokenBucketConfig) config;
-            return new TokenBucketLimiter();
+            return new TokenBucketLimiter(tb);
         } else if (config.algorithm == SLIDING_WINDOW_LOG) {
             SlidingWindowLogConfig sw = (SlidingWindowLogConfig) config;
-            return new SlidingWindowLogLimiter();
+            return new SlidingWindowLogLimiter(sw);
         }
         throw new IllegalArgumentException("Unsupported algorithm");
     }
